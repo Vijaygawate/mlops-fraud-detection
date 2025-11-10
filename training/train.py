@@ -90,7 +90,7 @@ def main():
     # For local testing
     if not os.path.exists(args.train):
         print("Running in local mode - downloading from S3")
-        s3_bucket = os.environ.get('S3_DATA_BUCKET', 'mlops-project-dev-ml-data-abc123')
+        s3_bucket = os.environ.get('S3_DATA_BUCKET', 'mlops-project-dev-ml-data-8c2241a2')
         
         os.makedirs('/tmp/data', exist_ok=True)
         download_from_s3(s3_bucket, 'processed-data/train.csv', '/tmp/data/train.csv')
