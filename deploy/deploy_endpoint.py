@@ -68,8 +68,8 @@ def main():
     
     # Configuration
     endpoint_name = os.environ.get('ENDPOINT_NAME', 'fraud-detection-endpoint')
-    s3_bucket = os.environ.get('MODEL_ARTIFACTS_BUCKET', 'mlops-project-dev-model-artifacts-abc123')
-    sagemaker_role = os.environ.get('SAGEMAKER_ROLE_ARN', 'arn:aws:iam::123456789012:role/SageMakerRole')
+    s3_bucket = os.environ.get('MODEL_ARTIFACTS_BUCKET', 'mlops-project-dev-model-artifacts-8c2241a2')
+    sagemaker_role = os.environ.get('SAGEMAKER_ROLE_ARN', 'arn:aws:iam::446468849132:role/mlops-project-dev-sagemaker-execution')
     instance_type = os.environ.get('ENDPOINT_INSTANCE_TYPE', 'ml.m5.large')
     instance_count = int(os.environ.get('ENDPOINT_INSTANCE_COUNT', '2'))
     
