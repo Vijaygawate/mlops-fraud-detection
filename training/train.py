@@ -100,7 +100,6 @@ def main():
     # Setup paths
     print("\nSetting up paths...")
     os.makedirs('/tmp/data', exist_ok=True)
-    os.makedirs('/tmp/model', exist_ok=True)
     
     # Download training data
     print("\nDownloading training data from S3...")
@@ -126,27 +125,82 @@ def main():
     # Train model
     model, metrics = train_model(X_train, y_train, X_val, y_val)
     
-    # Save model
-    model_path = '/tmp/model/model.pkl'
+    # Save model directly (not in subdirectory)
+    model_path = '/tmp/model.pkl'
     joblib.dump(model, model_path)
     print(f"\n✅ Model saved to {model_path}")
     
     # Save metrics
-    metrics_path = '/tmp/model/training_metrics.json'
+    metrics_path = '/tmp/training_metrics.json'
     with open(metrics_path, 'w') as f:
         json.dump(metrics, f, indent=2)
     print(f"✅ Metrics saved to {metrics_path}")
     
-    # CRITICAL: Create tarball for SageMaker
-    print("\n📦 Creating model tarball...")
+    # CRITICAL FIX: Create inference.py for SageMaker endpoint
+    print("\n📝 Creating inference script...")
+    inference_script = '''import joblib
+import json
+import numpy as np
+
+def model_fn(model_dir):
+    """Load the model from model directory"""
+    import os
+    model_path = os.path.join(model_dir, 'model.pkl')
+    model = joblib.load(model_path)
+    return model
+
+def input_fn(request_body, content_type='application/json'):
+    """Deserialize and prepare the prediction input"""
+    if content_type == 'application/json':
+        data = json.loads(request_body)
+        # Handle different input formats
+        if 'instances' in data:
+            return np.array(data['instances'])
+        elif isinstance(data, list):
+            return np.array(data)
+        else:
+            raise ValueError(f"Unsupported JSON format: {data}")
+    else:
+        raise ValueError(f"Unsupported content type: {content_type}")
+
+def predict_fn(input_data, model):
+    """Apply model to the incoming request"""
+    predictions = model.predict(input_data)
+    probabilities = model.predict_proba(input_data)
+    return {
+        'predictions': predictions.tolist(),
+        'probabilities': probabilities.tolist()
+    }
+
+def output_fn(prediction, accept='application/json'):
+    """Serialize and prepare the prediction output"""
+    if accept == 'application/json':
+        return json.dumps(prediction), accept
+    raise ValueError(f"Unsupported accept type: {accept}")
+'''
+    
+    inference_path = '/tmp/inference.py'
+    with open(inference_path, 'w') as f:
+        f.write(inference_script)
+    print(f"✅ Inference script created at {inference_path}")
+    
+    # CRITICAL FIX: Create tarball with FLAT structure (files at root, not in subdirectory)
+    print("\n📦 Creating model tarball with proper structure...")
     model_tar_path = '/tmp/model.tar.gz'
     with tarfile.open(model_tar_path, 'w:gz') as tar:
-        tar.add('/tmp/model', arcname='.')
-    print(f"✅ Model tarball created: {model_tar_path}")
+        # Add files with arcname to ensure they're at root of tarball
+        tar.add(model_path, arcname='model.pkl')
+        tar.add(inference_path, arcname='inference.py')
+    
+    # Verify tarball structure
+    print("\n✅ Tarball contents:")
+    with tarfile.open(model_tar_path, 'r:gz') as tar:
+        for member in tar.getmembers():
+            print(f"   ✓ {member.name}")
     
     # Get file size
     tar_size = os.path.getsize(model_tar_path)
-    print(f"   Tarball size: {tar_size / 1024:.2f} KB")
+    print(f"\n   Tarball size: {tar_size / 1024:.2f} KB")
     
     # Upload to S3 with timestamp
     timestamp = datetime.utcnow().strftime('%Y-%m-%d-%H-%M-%S')
