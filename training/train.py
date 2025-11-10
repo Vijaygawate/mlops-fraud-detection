@@ -14,11 +14,13 @@ import argparse
 from sklearn.ensemble import RandomForestClassifier
 import xgboost as xgb
 from datetime import datetime
+import tarfile
 
 def download_from_s3(bucket, key, local_path):
     """Download file from S3"""
     s3 = boto3.client('s3')
     print(f"Downloading s3://{bucket}/{key}")
+    os.makedirs(os.path.dirname(local_path), exist_ok=True)
     s3.download_file(bucket, key, local_path)
 
 def upload_to_s3(local_path, bucket, key):
@@ -41,6 +43,11 @@ def train_model(X_train, y_train, X_val, y_val):
         'scale_pos_weight': len(y_train[y_train == 0]) / len(y_train[y_train == 1]),
         'random_state': 42
     }
+    
+    print(f"Class balance:")
+    print(f"  Non-fraud: {len(y_train[y_train == 0])}")
+    print(f"  Fraud: {len(y_train[y_train == 1])}")
+    print(f"  Scale pos weight: {params['scale_pos_weight']:.2f}")
     
     # Train model
     model = xgb.XGBClassifier(**params)
@@ -80,31 +87,30 @@ def main():
     print("FRAUD DETECTION - MODEL TRAINING")
     print("=" * 80)
     
-    # Parse arguments
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--model-dir', type=str, default=os.environ.get('SM_MODEL_DIR', '/opt/ml/model'))
-    parser.add_argument('--train', type=str, default=os.environ.get('SM_CHANNEL_TRAIN', '/opt/ml/input/data/train'))
-    parser.add_argument('--validation', type=str, default=os.environ.get('SM_CHANNEL_VALIDATION', '/opt/ml/input/data/validation'))
-    args = parser.parse_args()
+    # Get environment variables
+    s3_data_bucket = os.environ.get('S3_DATA_BUCKET', 'mlops-project-dev-ml-data-8c2241a2')
+    model_artifacts_bucket = os.environ.get('MODEL_ARTIFACTS_BUCKET', 'mlops-project-dev-model-artifacts-8c2241a2')
     
-    # For local testing
-    if not os.path.exists(args.train):
-        print("Running in local mode - downloading from S3")
-        s3_bucket = os.environ.get('S3_DATA_BUCKET', 'mlops-project-dev-ml-data-8c2241a2')
-        
-        os.makedirs('/tmp/data', exist_ok=True)
-        download_from_s3(s3_bucket, 'processed-data/train.csv', '/tmp/data/train.csv')
-        download_from_s3(s3_bucket, 'processed-data/validation.csv', '/tmp/data/validation.csv')
-        
-        args.train = '/tmp/data'
-        args.validation = '/tmp/data'
-        args.model_dir = '/tmp/model'
-        os.makedirs(args.model_dir, exist_ok=True)
+    print(f"S3 Data Bucket: {s3_data_bucket}")
+    print(f"Model Artifacts Bucket: {model_artifacts_bucket}")
+    
+    if not s3_data_bucket or not model_artifacts_bucket:
+        raise ValueError("S3_DATA_BUCKET and MODEL_ARTIFACTS_BUCKET environment variables must be set!")
+    
+    # Setup paths
+    print("\nSetting up paths...")
+    os.makedirs('/tmp/data', exist_ok=True)
+    os.makedirs('/tmp/model', exist_ok=True)
+    
+    # Download training data
+    print("\nDownloading training data from S3...")
+    download_from_s3(s3_data_bucket, 'processed-data/train.csv', '/tmp/data/train.csv')
+    download_from_s3(s3_data_bucket, 'processed-data/validation.csv', '/tmp/data/validation.csv')
     
     # Load training data
     print("\nLoading training data...")
-    train_df = pd.read_csv(os.path.join(args.train, 'train.csv'), header=None)
-    val_df = pd.read_csv(os.path.join(args.validation, 'validation.csv'), header=None)
+    train_df = pd.read_csv('/tmp/data/train.csv', header=None)
+    val_df = pd.read_csv('/tmp/data/validation.csv', header=None)
     
     # Split features and target (last column is target)
     X_train = train_df.iloc[:, :-1]
@@ -121,15 +127,49 @@ def main():
     model, metrics = train_model(X_train, y_train, X_val, y_val)
     
     # Save model
-    model_path = os.path.join(args.model_dir, 'model.pkl')
+    model_path = '/tmp/model/model.pkl'
     joblib.dump(model, model_path)
-    print(f"\nModel saved to {model_path}")
+    print(f"\n✅ Model saved to {model_path}")
     
     # Save metrics
-    metrics_path = os.path.join(args.model_dir, 'training_metrics.json')
+    metrics_path = '/tmp/model/training_metrics.json'
     with open(metrics_path, 'w') as f:
         json.dump(metrics, f, indent=2)
-    print(f"Metrics saved to {metrics_path}")
+    print(f"✅ Metrics saved to {metrics_path}")
+    
+    # CRITICAL: Create tarball for SageMaker
+    print("\n📦 Creating model tarball...")
+    model_tar_path = '/tmp/model.tar.gz'
+    with tarfile.open(model_tar_path, 'w:gz') as tar:
+        tar.add('/tmp/model', arcname='.')
+    print(f"✅ Model tarball created: {model_tar_path}")
+    
+    # Get file size
+    tar_size = os.path.getsize(model_tar_path)
+    print(f"   Tarball size: {tar_size / 1024:.2f} KB")
+    
+    # Upload to S3 with timestamp
+    timestamp = datetime.utcnow().strftime('%Y-%m-%d-%H-%M-%S')
+    training_job_name = f'job-{timestamp}'
+    model_s3_key = f'training-jobs/{training_job_name}/output/model.tar.gz'
+    metrics_s3_key = f'training-jobs/{training_job_name}/output/training_metrics.json'
+    
+    print(f"\n📤 Uploading model to S3...")
+    print(f"   Bucket: {model_artifacts_bucket}")
+    print(f"   Key: {model_s3_key}")
+    
+    s3 = boto3.client('s3')
+    s3.upload_file(model_tar_path, model_artifacts_bucket, model_s3_key)
+    print(f"✅ Model uploaded to s3://{model_artifacts_bucket}/{model_s3_key}")
+    
+    # Upload metrics
+    s3.upload_file(metrics_path, model_artifacts_bucket, metrics_s3_key)
+    print(f"✅ Metrics uploaded to s3://{model_artifacts_bucket}/{metrics_s3_key}")
+    
+    # Save training job name for next stages
+    with open('/tmp/training_job_name.txt', 'w') as f:
+        f.write(training_job_name)
+    print(f"✅ Training job name: {training_job_name}")
     
     # Send metrics to CloudWatch
     try:
@@ -149,11 +189,15 @@ def main():
                 }
             ]
         )
-        print("Metrics sent to CloudWatch")
+        print("✅ Metrics sent to CloudWatch")
     except Exception as e:
         print(f"Warning: Could not send metrics to CloudWatch: {e}")
     
-    print("\nTraining complete!")
+    print("\n" + "=" * 80)
+    print("✅ TRAINING COMPLETE!")
+    print("=" * 80)
+    print(f"Model location: s3://{model_artifacts_bucket}/{model_s3_key}")
+    print(f"Training job: {training_job_name}")
     print("=" * 80)
 
 if __name__ == "__main__":
