@@ -12,6 +12,7 @@ def download_from_s3(bucket, key, local_path):
     """Download file from S3"""
     s3 = boto3.client('s3')
     print(f"Downloading s3://{bucket}/{key}")
+    os.makedirs(os.path.dirname(local_path), exist_ok=True)
     s3.download_file(bucket, key, local_path)
 
 def main():
@@ -21,8 +22,11 @@ def main():
     
     # Configuration
     model_package_group_name = os.environ.get('MODEL_PACKAGE_GROUP_NAME', 'fraud-detection-models')
-    s3_bucket = os.environ.get('MODEL_ARTIFACTS_BUCKET', 'mlops-project-dev-model-artifacts-abc123')
-    sagemaker_role = os.environ.get('SAGEMAKER_ROLE_ARN', 'arn:aws:iam::123456789012:role/SageMakerRole')
+    s3_bucket = os.environ.get('MODEL_ARTIFACTS_BUCKET', 'mlops-project-dev-model-artifacts-8c2241a2')
+    sagemaker_role = os.environ.get('SAGEMAKER_ROLE_ARN', 'arn:aws:iam::446468849132:role/mlops-project-dev-sagemaker-execution')
+    
+    print(f"Model Package Group: {model_package_group_name}")
+    print(f"Artifacts Bucket: {s3_bucket}")
     
     # Download evaluation metrics
     print("\nDownloading evaluation metrics...")
@@ -43,9 +47,33 @@ def main():
         print("\n❌ Model did not meet approval criteria. Skipping registration.")
         return
     
-    # Get model artifacts location
-    training_job_name = os.environ.get('TRAINING_JOB_NAME', 'latest')
-    model_data_url = f"s3://{s3_bucket}/training-jobs/{training_job_name}/output/model.tar.gz"
+    print("\n✅ Model approved! Proceeding with registration...")
+    
+    # Find the latest trained model (FIXED: Don't use hardcoded training_job_name)
+    s3 = boto3.client('s3')
+    print("\nFinding latest trained model...")
+    
+    response = s3.list_objects_v2(
+        Bucket=s3_bucket,
+        Prefix='training-jobs/'
+    )
+    
+    objects = sorted(response.get('Contents', []), key=lambda x: x['LastModified'], reverse=True)
+    
+    model_data_url = None
+    training_job_name = None
+    
+    for obj in objects:
+        if obj['Key'].endswith('model.tar.gz'):
+            model_data_url = f"s3://{s3_bucket}/{obj['Key']}"
+            # Extract training job name from path: training-jobs/job-YYYY-MM-DD-HH-MM-SS/output/model.tar.gz
+            training_job_name = obj['Key'].split('/')[1]
+            print(f"Found model: {model_data_url}")
+            print(f"Training job: {training_job_name}")
+            break
+    
+    if not model_data_url:
+        raise Exception("No trained model found in S3!")
     
     # Create SageMaker client
     sagemaker = boto3.client('sagemaker')
@@ -62,7 +90,6 @@ def main():
             InferenceSpecification={
                 'Containers': [
                     {
-                        # 'Image': '492215442770.dkr.ecr.eu-central-1.amazonaws.com/sagemaker-scikit-learn:0.23-1-cpu-py3', (central)
                         'Image': '662702820516.dkr.ecr.eu-north-1.amazonaws.com/sagemaker-scikit-learn:0.23-1-cpu-py3',
                         'ModelDataUrl': model_data_url,
                     }
@@ -80,15 +107,14 @@ def main():
                 ]
             },
             ModelApprovalStatus='PendingManualApproval',
-            MetadataProperties={
-                'GeneratedBy': 'MLOps Pipeline',
-                'TrainingJobName': training_job_name
-            },
+            # FIXED: Removed MetadataProperties - TrainingJobName not supported there
             CustomerMetadataProperties={
                 'Accuracy': str(metrics['accuracy']),
                 'F1Score': str(metrics['f1_score']),
                 'ROCAUC': str(metrics['roc_auc']),
-                'Timestamp': datetime.utcnow().isoformat()
+                'TrainingJobName': training_job_name,  # Moved here
+                'Timestamp': datetime.utcnow().isoformat(),
+                'GeneratedBy': 'MLOps-Pipeline'  # Moved here
             }
         )
         
@@ -97,31 +123,41 @@ def main():
         print(f"Model Package ARN: {model_package_arn}")
         
         # Save model package ARN for deployment stage
+        # Save to both locations
         with open('/tmp/model_package_arn.txt', 'w') as f:
             f.write(model_package_arn)
         
+        with open('model_package_arn.txt', 'w') as f:
+            f.write(model_package_arn)
+        
+        print("Model package ARN saved locally")
+        
         # Upload to S3
-        s3 = boto3.client('s3')
         s3.upload_file('/tmp/model_package_arn.txt', s3_bucket, 'deployment/model_package_arn.txt')
+        print("Model package ARN uploaded to S3")
         
         # Send metric to CloudWatch
-        cloudwatch = boto3.client('cloudwatch')
-        cloudwatch.put_metric_data(
-            Namespace='MLOps',
-            MetricData=[
-                {
-                    'MetricName': 'ModelRegistered',
-                    'Value': 1,
-                    'Unit': 'Count'
-                }
-            ]
-        )
+        try:
+            cloudwatch = boto3.client('cloudwatch')
+            cloudwatch.put_metric_data(
+                Namespace='MLOps/Registration',
+                MetricData=[
+                    {
+                        'MetricName': 'ModelRegistered',
+                        'Value': 1,
+                        'Unit': 'Count'
+                    }
+                ]
+            )
+            print("✅ Metrics sent to CloudWatch")
+        except Exception as e:
+            print(f"Warning: Could not send metrics to CloudWatch: {e}")
         
     except Exception as e:
         print(f"\n❌ Error registering model: {e}")
         raise
     
-    print("\nRegistration complete!")
+    print("\n✅ Registration complete!")
     print("=" * 80)
 
 if __name__ == "__main__":
