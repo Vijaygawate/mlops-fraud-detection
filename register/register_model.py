@@ -49,7 +49,7 @@ def main():
     
     print("\n✅ Model approved! Proceeding with registration...")
     
-    # Find the latest trained model (FIXED: Don't use hardcoded training_job_name)
+    # Find the latest trained model
     s3 = boto3.client('s3')
     print("\nFinding latest trained model...")
     
@@ -78,6 +78,21 @@ def main():
     # Create SageMaker client
     sagemaker = boto3.client('sagemaker')
     
+    # CRITICAL FIX: Get XGBoost container image (not scikit-learn)
+    print("\nGetting container image...")
+    from sagemaker import image_uris
+    region = boto3.Session().region_name
+    
+    container_image = image_uris.retrieve(
+        framework='xgboost',  # Changed from 'sklearn'
+        region=region,
+        version='1.5-1',
+        py_version='py3',
+        instance_type='ml.m5.large'
+    )
+    
+    print(f"Using XGBoost container: {container_image}")
+    
     # Register model
     print("\nRegistering model in Model Registry...")
     
@@ -90,7 +105,7 @@ def main():
             InferenceSpecification={
                 'Containers': [
                     {
-                        'Image': '662702820516.dkr.ecr.eu-north-1.amazonaws.com/sagemaker-scikit-learn:0.23-1-cpu-py3',
+                        'Image': container_image,  # Using XGBoost container
                         'ModelDataUrl': model_data_url,
                     }
                 ],
@@ -107,14 +122,13 @@ def main():
                 ]
             },
             ModelApprovalStatus='PendingManualApproval',
-            # FIXED: Removed MetadataProperties - TrainingJobName not supported there
             CustomerMetadataProperties={
                 'Accuracy': str(metrics['accuracy']),
                 'F1Score': str(metrics['f1_score']),
                 'ROCAUC': str(metrics['roc_auc']),
-                'TrainingJobName': training_job_name,  # Moved here
+                'TrainingJobName': training_job_name,
                 'Timestamp': datetime.utcnow().isoformat(),
-                'GeneratedBy': 'MLOps-Pipeline'  # Moved here
+                'GeneratedBy': 'MLOps-Pipeline'
             }
         )
         
@@ -123,7 +137,6 @@ def main():
         print(f"Model Package ARN: {model_package_arn}")
         
         # Save model package ARN for deployment stage
-        # Save to both locations
         with open('/tmp/model_package_arn.txt', 'w') as f:
             f.write(model_package_arn)
         
