@@ -47,8 +47,8 @@ def main():
     print("=" * 80)
     
     # Configuration
-    s3_bucket = os.environ.get('MODEL_ARTIFACTS_BUCKET', 'mlops-project-dev-model-artifacts-abc123')
-    data_bucket = os.environ.get('S3_DATA_BUCKET', 'mlops-project-dev-ml-data-abc123')
+    s3_bucket = os.environ.get('MODEL_ARTIFACTS_BUCKET', 'mlops-project-dev-model-artifacts-8c2241a2')
+    data_bucket = os.environ.get('S3_DATA_BUCKET', 'mlops-project-dev-ml-data-8c2241a2')
     
     # Download test data
     print("\nDownloading test data...")
