@@ -14,7 +14,7 @@ from sklearn.preprocessing import StandardScaler
 import joblib
 
 # Configuration
-S3_BUCKET = os.environ.get('S3_DATA_BUCKET', 'mlops-project-dev-ml-data-abc123')
+S3_BUCKET = os.environ.get('S3_DATA_BUCKET', 'mlops-project-dev-ml-data-b618d389')
 INPUT_KEY = 'raw-data/transactions.csv'
 OUTPUT_PREFIX = 'processed-data/'
 

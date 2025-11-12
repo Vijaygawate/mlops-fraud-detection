@@ -22,7 +22,7 @@ def main():
     
     # Configuration
     model_package_group_name = os.environ.get('MODEL_PACKAGE_GROUP_NAME', 'fraud-detection-models')
-    s3_bucket = os.environ.get('MODEL_ARTIFACTS_BUCKET', 'mlops-project-dev-model-artifacts-8c2241a2')
+    s3_bucket = os.environ.get('MODEL_ARTIFACTS_BUCKET', 'mlops-project-dev-model-artifacts-b618d389')
     sagemaker_role = os.environ.get('SAGEMAKER_ROLE_ARN', 'arn:aws:iam::446468849132:role/mlops-project-dev-sagemaker-execution')
     
     print(f"Model Package Group: {model_package_group_name}")

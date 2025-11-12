@@ -88,8 +88,8 @@ def main():
     print("=" * 80)
     
     # Get environment variables
-    s3_data_bucket = os.environ.get('S3_DATA_BUCKET', 'mlops-project-dev-ml-data-8c2241a2')
-    model_artifacts_bucket = os.environ.get('MODEL_ARTIFACTS_BUCKET', 'mlops-project-dev-model-artifacts-8c2241a2')
+    s3_data_bucket = os.environ.get('S3_DATA_BUCKET', 'mlops-project-dev-ml-data-b618d389')
+    model_artifacts_bucket = os.environ.get('MODEL_ARTIFACTS_BUCKET', 'mlops-project-dev-model-artifacts-b618d389')
     
     print(f"S3 Data Bucket: {s3_data_bucket}")
     print(f"Model Artifacts Bucket: {model_artifacts_bucket}")
