@@ -66,7 +66,6 @@ def main():
     for obj in objects:
         if obj['Key'].endswith('model.tar.gz'):
             model_data_url = f"s3://{s3_bucket}/{obj['Key']}"
-            # Extract training job name from path: training-jobs/job-YYYY-MM-DD-HH-MM-SS/output/model.tar.gz
             training_job_name = obj['Key'].split('/')[1]
             print(f"Found model: {model_data_url}")
             print(f"Training job: {training_job_name}")
@@ -78,13 +77,13 @@ def main():
     # Create SageMaker client
     sagemaker = boto3.client('sagemaker')
     
-    # CRITICAL FIX: Get XGBoost container image (not scikit-learn)
+    # Get XGBoost container image
     print("\nGetting container image...")
     from sagemaker import image_uris
     region = boto3.Session().region_name
     
     container_image = image_uris.retrieve(
-        framework='xgboost',  # Changed from 'sklearn'
+        framework='xgboost',
         region=region,
         version='1.5-1',
         py_version='py3',
@@ -105,7 +104,7 @@ def main():
             InferenceSpecification={
                 'Containers': [
                     {
-                        'Image': container_image,  # Using XGBoost container
+                        'Image': container_image,
                         'ModelDataUrl': model_data_url,
                     }
                 ],
@@ -136,18 +135,73 @@ def main():
         print(f"\n✅ Model registered successfully!")
         print(f"Model Package ARN: {model_package_arn}")
         
-        # Save model package ARN for deployment stage
+        # Save model package ARN locally
+        print("\n📝 Saving model package ARN locally...")
         with open('/tmp/model_package_arn.txt', 'w') as f:
             f.write(model_package_arn)
         
         with open('model_package_arn.txt', 'w') as f:
             f.write(model_package_arn)
         
-        print("Model package ARN saved locally")
+        print("✅ Model package ARN saved locally")
         
-        # Upload to S3
-        s3.upload_file('/tmp/model_package_arn.txt', s3_bucket, 'deployment/model_package_arn.txt')
-        print("Model package ARN uploaded to S3")
+        # ===== ENHANCED: Upload to S3 with verification =====
+        s3_key = 'deployment/model_package_arn.txt'
+        
+        print(f"\n📤 Uploading to S3: s3://{s3_bucket}/{s3_key}")
+        
+        try:
+            # Upload the file
+            s3.upload_file('/tmp/model_package_arn.txt', s3_bucket, s3_key)
+            print(f"✅ Upload complete")
+            
+            # Verify upload succeeded
+            print("🔍 Verifying upload...")
+            response = s3.head_object(Bucket=s3_bucket, Key=s3_key)
+            print(f"✅ Verified: File exists in S3")
+            print(f"   - Size: {response['ContentLength']} bytes")
+            print(f"   - Last Modified: {response['LastModified']}")
+            
+            # Read back and verify content
+            s3_obj = s3.get_object(Bucket=s3_bucket, Key=s3_key)
+            uploaded_arn = s3_obj['Body'].read().decode('utf-8').strip()
+            
+            if uploaded_arn == model_package_arn:
+                print(f"✅ Content verified: ARN matches")
+                print(f"   ARN: {uploaded_arn}")
+            else:
+                print(f"⚠️ Warning: Content mismatch!")
+                print(f"   Expected: {model_package_arn}")
+                print(f"   Got: {uploaded_arn}")
+                raise Exception("Uploaded ARN doesn't match!")
+            
+            # List deployment folder to confirm
+            print(f"\n📂 Listing s3://{s3_bucket}/deployment/")
+            list_response = s3.list_objects_v2(Bucket=s3_bucket, Prefix='deployment/')
+            
+            if 'Contents' in list_response:
+                print(f"✅ Files in deployment folder:")
+                for obj in list_response['Contents']:
+                    print(f"   - {obj['Key']} ({obj['Size']} bytes)")
+            else:
+                print(f"⚠️ Warning: No files found in deployment folder")
+            
+        except Exception as e:
+            print(f"❌ Error during S3 upload/verification: {e}")
+            print("\n🔍 Debugging info:")
+            print(f"   Bucket: {s3_bucket}")
+            print(f"   Key: {s3_key}")
+            print(f"   Local file: /tmp/model_package_arn.txt")
+            
+            # Check if local file exists
+            if os.path.exists('/tmp/model_package_arn.txt'):
+                print(f"   ✅ Local file exists")
+                with open('/tmp/model_package_arn.txt', 'r') as f:
+                    print(f"   Content: {f.read()}")
+            else:
+                print(f"   ❌ Local file doesn't exist!")
+            
+            raise
         
         # Send metric to CloudWatch
         try:
@@ -162,15 +216,16 @@ def main():
                     }
                 ]
             )
-            print("✅ Metrics sent to CloudWatch")
+            print("\n✅ Metrics sent to CloudWatch")
         except Exception as e:
-            print(f"Warning: Could not send metrics to CloudWatch: {e}")
+            print(f"⚠️ Warning: Could not send metrics to CloudWatch: {e}")
         
     except Exception as e:
         print(f"\n❌ Error registering model: {e}")
         raise
     
-    print("\n✅ Registration complete!")
+    print("\n" + "=" * 80)
+    print("✅ REGISTRATION COMPLETE!")
     print("=" * 80)
 
 if __name__ == "__main__":
